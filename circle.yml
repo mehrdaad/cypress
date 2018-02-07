@@ -291,7 +291,7 @@ jobs:
           command: $(npm bin)/wait-on http://localhost:3500
           working_directory: packages/driver
       - run:
-          command: npm run test-integration -- --parallel 5 --index 0
+          command: npm run cypress:run -- --parallel 5 --index 0
           working_directory: packages/driver
       - store_test_results:
           path: /tmp/cypress-monorepo
@@ -311,7 +311,7 @@ jobs:
           command: $(npm bin)/wait-on http://localhost:3500
           working_directory: packages/driver
       - run:
-          command: npm run test-integration -- --parallel 5 --index 1
+          command: npm run cypress:run -- --parallel 5 --index 1
           working_directory: packages/driver
       - store_test_results:
           path: /tmp/cypress-monorepo
@@ -331,7 +331,7 @@ jobs:
           command: $(npm bin)/wait-on http://localhost:3500
           working_directory: packages/driver
       - run:
-          command: npm run test-integration -- --parallel 5 --index 2
+          command: npm run cypress:run -- --parallel 5 --index 2
           working_directory: packages/driver
       - store_test_results:
           path: /tmp/cypress-monorepo
@@ -351,7 +351,7 @@ jobs:
           command: $(npm bin)/wait-on http://localhost:3500
           working_directory: packages/driver
       - run:
-          command: npm run test-integration -- --parallel 5 --index 3
+          command: npm run cypress:run -- --parallel 5 --index 3
           working_directory: packages/driver
       - store_test_results:
           path: /tmp/cypress-monorepo
@@ -371,7 +371,7 @@ jobs:
           command: $(npm bin)/wait-on http://localhost:3500
           working_directory: packages/driver
       - run:
-          command: npm run test-integration -- --parallel 5 --index 4
+          command: npm run cypress:run -- --parallel 5 --index 4
           working_directory: packages/driver
       - store_test_results:
           path: /tmp/cypress-monorepo
@@ -387,7 +387,7 @@ jobs:
           command: npm run build-prod
           working_directory: packages/desktop-gui
       - run:
-          command: npm run test-integration -- --parallel 3 --index 0
+          command: npm run cypress:run -- --parallel 3 --index 0
           working_directory: packages/desktop-gui
       - store_test_results:
           path: /tmp/cypress-monorepo
@@ -403,7 +403,7 @@ jobs:
           command: npm run build-prod
           working_directory: packages/desktop-gui
       - run:
-          command: npm run test-integration -- --parallel 3 --index 1
+          command: npm run cypress:run -- --parallel 3 --index 1
           working_directory: packages/desktop-gui
       - store_test_results:
           path: /tmp/cypress-monorepo
@@ -419,7 +419,7 @@ jobs:
           command: npm run build-prod
           working_directory: packages/desktop-gui
       - run:
-          command: npm run test-integration -- --parallel 3 --index 2
+          command: npm run cypress:run -- --parallel 3 --index 2
           working_directory: packages/desktop-gui
       - store_test_results:
           path: /tmp/cypress-monorepo
@@ -461,25 +461,47 @@ jobs:
             - binary-url.json
             - cypress.zip
 
+  "test-kitchensink-against-staging":
+    <<: *defaults
+    steps:
+      - restore_cache:
+          key: cypress-monorepo-{{ .Branch }}-{{ .Revision }}
+      - run:
+          name: Cloning test project
+          command: git clone https://github.com/cypress-io/cypress-example-kitchensink.git /tmp/repo
+      - run:
+          name: Install prod dependencies
+          command: npm install --production
+          working_directory: /tmp/repo
+      - run:
+          name: Example server
+          command: npm start
+          working_directory: /tmp/repo
+          background: true
+      - run:
+          name: Run Kitchensink example project
+          command: |
+            CYPRESS_ENV=staging \
+            CYPRESS_PROJECT_ID=$TEST_KITCHENSINK_PROJECT_ID \
+            CYPRESS_RECORD_KEY=$TEST_KITCHENSINK_RECORD_KEY \
+            CYPRESS_videoRecording=false \
+            npm run cypress:run -- --project /tmp/repo --record
+
   "test-against-staging":
     <<: *defaults
     steps:
       - restore_cache:
           key: cypress-monorepo-{{ .Branch }}-{{ .Revision }}
       - run:
-          name: Installing xvfb-maybe
-          command: npm i cypress-io/xvfb-maybe
-      - run:
           name: Cloning test project
-          command: git clone https://github.com/cypress-io/cypress-test-tiny.git /tmp/cypress-test-tiny
+          command: git clone https://github.com/cypress-io/cypress-test-tiny.git /tmp/repo
       - run:
           name: Run test project
           command: |
             CYPRESS_ENV=staging \
-            CYPRESS_PROJECT_ID=$STAGING_PROJECT_ID \
-            CYPRESS_RECORD_KEY=$STAGING_RECORD_ID \
-            $(npm bin)/xvfb-maybe npm start -- --run-project /tmp/cypress-test-tiny \
-            --record
+            CYPRESS_PROJECT_ID=$TEST_TINY_PROJECT_ID \
+            CYPRESS_RECORD_KEY=$TEST_TINY_RECORD_KEY \
+            npm run cypress:run -- --project /tmp/repo --record
 
   "build-npm-package":
     <<: *defaults
@@ -611,8 +633,8 @@ jobs:
           working_directory: /tmp/cypress-test-tiny
           command: |
             CYPRESS_ENV=staging \
-            CYPRESS_PROJECT_ID=$STAGING_PROJECT_ID \
-            CYPRESS_RECORD_KEY=$STAGING_RECORD_ID \
+            CYPRESS_PROJECT_ID=$TEST_TINY_PROJECT_ID \
+            CYPRESS_RECORD_KEY=$TEST_TINY_RECORD_KEY \
             $(npm bin)/cypress run --record
 
 workflows:
@@ -675,6 +697,17 @@ workflows:
           requires:
             - build
       - test-against-staging:
+          filters:
+            branches:
+              only:
+                - develop
+          requires:
+            - build
+      - test-kitchensink-against-staging:
+          filters:
+            branches:
+              only:
+                - develop
           requires:
             - build
       - build-npm-package:
@@ -682,7 +715,6 @@ workflows:
             branches:
               only:
                 - develop
-                - staging-813
           requires:
             - build
       - build-binary:
@@ -690,7 +722,6 @@ workflows:
             branches:
               only:
                 - develop
-                - staging-813
           requires:
             - build
       - test-next-version:
@@ -714,7 +745,6 @@ workflows:
             branches:
               only:
                 - develop
-                - staging-813
           requires:
             - build-npm-package
             - build-binary

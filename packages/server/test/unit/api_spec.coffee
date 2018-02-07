@@ -6,6 +6,7 @@ os       = require("os")
 nmi      = require("node-machine-id")
 pkg      = require("@packages/root")
 api      = require("#{root}lib/api")
+browsers = require("#{root}lib/browsers")
 Promise  = require("bluebird")
 
 describe "lib/api", ->
@@ -203,8 +204,9 @@ describe "lib/api", ->
         commitMessage:     "such hax"
         remoteOrigin:      "https://github.com/foo/bar.git"
         ciProvider:        "circle"
-        ciBuildNumber:      "987"
+        ciBuildNumber:     "987"
         ciParams:          { foo: "bar" }
+        specs:             ["foo.js", "bar.js"]
       }
 
     it "POST /builds + returns buildId", ->
@@ -292,16 +294,7 @@ describe "lib/api", ->
 
     it "sets timeout to 10 seconds", ->
       @sandbox.stub(rp, "post").returns({
-        promise: -> {
-          get: -> {
-            catch: -> {
-              catch: -> {
-                then: (fn) -> fn()
-              }
-              then: (fn) -> fn()
-            }
-          }
-        }
+        promise: () -> Promise.resolve({buildId: 'foo'})
       })
 
       api.createRun({})
@@ -328,8 +321,8 @@ describe "lib/api", ->
 
       @postProps = {
         spec: "cypress/integration/app_spec.js"
-        browserName: "Electron"
-        browserVersion: "53"
+        browserName: "Foo"
+        browserVersion: "1.2.3"
         osName: "darwin"
         osVersion: "10.10.10"
         osCpus: [{model: "foo"}]
@@ -341,6 +334,7 @@ describe "lib/api", ->
 
       @createProps = {
         buildId: "build-id-123"
+        browser: "foo"
         spec: "cypress/integration/app_spec.js"
       }
 
@@ -349,6 +343,10 @@ describe "lib/api", ->
       @sandbox.stub(os, "cpus").returns([{model: "foo"}])
       @sandbox.stub(os, "freemem").returns(1000)
       @sandbox.stub(os, "totalmem").returns(2000)
+      @sandbox.stub(browsers, "getByName").resolves({
+        displayName: "Foo"
+        version: "1.2.3"
+      })
 
       os.platform.returns("darwin")
 
@@ -363,6 +361,7 @@ describe "lib/api", ->
 
       api.createInstance(@createProps)
       .then (instanceId) ->
+        expect(browsers.getByName).to.be.calledWith("foo")
         expect(instanceId).to.eq("instance-id-123")
 
     it "POST /builds/:id/instances failure formatting", ->

@@ -13,6 +13,8 @@ const execa = require('execa-wrap')
 const path = require('path')
 
 describe('cli', function () {
+  require('mocha-banner').register()
+
   beforeEach(function () {
     logger.reset()
     this.sandbox.stub(process, 'exit')
@@ -181,7 +183,7 @@ describe('cli', function () {
 
     it('calls run with relative --project folder', function () {
       this.sandbox.stub(path, 'resolve')
-        .withArgs('foo/bar').returns('/mock/absolute/foo/bar')
+      .withArgs('foo/bar').returns('/mock/absolute/foo/bar')
       this.exec('run --project foo/bar')
       expect(run.start).to.be.calledWith({ project: '/mock/absolute/foo/bar' })
     })
@@ -191,7 +193,7 @@ describe('cli', function () {
       expect(run.start).to.be.calledWith({ project: '/tmp/foo/bar' })
     })
 
-    it('calls run with heded', function () {
+    it('calls run with headed', function () {
       this.exec('run --headed')
       expect(run.start).to.be.calledWith({ headed: true })
     })
@@ -204,7 +206,7 @@ describe('cli', function () {
 
     it('calls open.start with relative --project folder', function () {
       this.sandbox.stub(path, 'resolve')
-        .withArgs('foo/bar').returns('/mock/absolute/foo/bar')
+      .withArgs('foo/bar').returns('/mock/absolute/foo/bar')
       this.exec('open --project foo/bar')
       expect(open.start).to.be.calledWith({ project: '/mock/absolute/foo/bar' })
     })
@@ -218,6 +220,12 @@ describe('cli', function () {
       // this.sandbox.stub(open, 'start').resolves()
       this.exec('open --port 7878')
       expect(open.start).to.be.calledWith({ port: '7878' })
+    })
+
+    it('calls open.start with global', function () {
+      // this.sandbox.stub(open, 'start').resolves()
+      this.exec('open --port 7878 --global')
+      expect(open.start).to.be.calledWith({ port: '7878', global: true })
     })
 
     it('calls open.start + catches errors', function (done) {

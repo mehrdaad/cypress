@@ -1,8 +1,10 @@
 require('../spec_helper')
 
+const snapshot = require('snap-shot-it')
+const supportsColor = require('supports-color')
+
 const util = require(`${lib}/util`)
 const logger = require(`${lib}/logger`)
-const snapshot = require('snap-shot-it')
 
 describe('util', function () {
   beforeEach(function () {
@@ -10,7 +12,7 @@ describe('util', function () {
     this.sandbox.stub(logger, 'error')
   })
 
-  context('stdoutLineMatches', () => {
+  context('.stdoutLineMatches', () => {
     const { stdoutLineMatches } = util
 
     it('is a function', () => {
@@ -41,21 +43,21 @@ describe('util', function () {
     })
   })
 
-  context('normalizeModuleOptions', () => {
+  context('.normalizeModuleOptions', () => {
     const { normalizeModuleOptions } = util
 
     it('does not change other properties', () => {
       const options = {
         foo: 'bar',
       }
-      snapshot(normalizeModuleOptions(options))
+      snapshot('others_unchanged', normalizeModuleOptions(options))
     })
 
     it('passes string env unchanged', () => {
       const options = {
         env: 'foo=bar',
       }
-      snapshot(normalizeModuleOptions(options))
+      snapshot('env_as_string', normalizeModuleOptions(options))
     })
 
     it('converts environment object', () => {
@@ -66,7 +68,7 @@ describe('util', function () {
           host: 'kevin.dev.local',
         },
       }
-      snapshot(normalizeModuleOptions(options))
+      snapshot('env_as_object', normalizeModuleOptions(options))
     })
 
     it('converts config object', () => {
@@ -76,7 +78,32 @@ describe('util', function () {
           watchForFileChanges: false,
         },
       }
-      snapshot(normalizeModuleOptions(options))
+      snapshot('config_as_object', normalizeModuleOptions(options))
+    })
+
+    it('converts reporterOptions object', () => {
+      const options = {
+        reporterOptions: {
+          mochaFile: 'results/my-test-output.xml',
+          toConsole: true,
+        },
+      }
+      snapshot('reporter_options_as_object', normalizeModuleOptions(options))
+    })
+  })
+
+  context('.supportsColor', function () {
+    it('is true on obj return for stderr', function () {
+      const obj = {}
+      this.sandbox.stub(supportsColor, 'stderr').value(obj)
+
+      expect(util.supportsColor()).to.be.true
+    })
+
+    it('is false on false return for stderr', function () {
+      this.sandbox.stub(supportsColor, 'stderr').value(false)
+
+      expect(util.supportsColor()).to.be.false
     })
   })
 

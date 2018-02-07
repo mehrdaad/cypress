@@ -2,6 +2,7 @@ _        = require("lodash")
 path     = require("path")
 Promise  = require("bluebird")
 fs       = require("fs-extra")
+deepDiff = require("return-deep-diff")
 errors   = require("./errors")
 scaffold = require("./scaffold")
 errors   = require("./errors")
@@ -12,15 +13,44 @@ v        = require("./util/validation")
 log      = require("debug")("cypress:server:config")
 pathHelpers = require("./util/path_helpers")
 
-## cypress following by _
+## cypress followed by _
 cypressEnvRe = /^(cypress_)/i
 dashesOrUnderscoresRe = /^(_-)+/
+oneOrMoreSpacesRe = /\s+/
 
-folders = "fileServerFolder videosFolder supportFolder fixturesFolder integrationFolder screenshotsFolder unitFolder supportFile".split(" ")
-configKeys = "port reporter reporterOptions baseUrl execTimeout defaultCommandTimeout pageLoadTimeout requestTimeout responseTimeout numTestsKeptInMemory screenshotOnHeadlessFailure waitForAnimations animationDistanceThreshold watchForFileChanges trashAssetsBeforeHeadlessRuns chromeWebSecurity videoRecording videoCompression videoUploadOnPasses viewportWidth viewportHeight supportFile fileServerFolder supportFolder fixturesFolder integrationFolder videosFolder screenshotsFolder environmentVariables hosts".split(" ")
+toWords = (str) ->
+  str.trim().split(oneOrMoreSpacesRe)
 
 isCypressEnvLike = (key) ->
   cypressEnvRe.test(key) and key isnt "CYPRESS_ENV"
+
+folders = toWords """
+  fileServerFolder   fixturesFolder   integrationFolder   screenshotsFolder
+  supportFile        supportFolder    unitFolder          videosFolder
+"""
+
+configKeys = toWords """
+  animationDistanceThreshold      fileServerFolder
+  baseUrl                         fixturesFolder
+  chromeWebSecurity               integrationFolder
+  env                             pluginsFile
+  hosts                           screenshotsFolder
+  numTestsKeptInMemory            supportFile
+  port                            supportFolder
+  reporter                        videosFolder
+  reporterOptions
+  screenshotOnHeadlessFailure     defaultCommandTimeout
+  testFiles                       execTimeout
+  trashAssetsBeforeHeadlessRuns   pageLoadTimeout
+  userAgent                       requestTimeout
+  viewportWidth                   responseTimeout
+  viewportHeight
+  videoRecording
+  videoCompression
+  videoUploadOnPasses
+  watchForFileChanges
+  waitForAnimations
+"""
 
 defaults = {
   port:                          null
@@ -28,15 +58,18 @@ defaults = {
   morgan:                        true
   baseUrl:                       null
   socketId:                      null
-  isTextTerminal:                    false
+  userAgent:                     null
+  isTextTerminal:                false
   reporter:                      "spec"
   reporterOptions:               null
+  blacklistHosts:                null
   clientRoute:                   "/__/"
   xhrRoute:                      "/xhrs/"
   socketIoRoute:                 "/__socket.io"
   socketIoCookie:                "__socket.io"
   reporterRoute:                 "/__cypress/reporter"
   ignoreTestFiles:               "*.hot-update.js"
+  testFiles:                     "**/*.*"
   defaultCommandTimeout:         4000
   requestTimeout:                5000
   responseTimeout:               30000
@@ -62,6 +95,7 @@ defaults = {
   integrationFolder:             "cypress/integration"
   screenshotsFolder:             "cypress/screenshots"
   namespace:                     "__cypress"
+  pluginsFile:                    "cypress/plugins"
 
   ## deprecated
   javascripts:                   []
@@ -70,6 +104,7 @@ defaults = {
 validationRules = {
   animationDistanceThreshold: v.isNumber
   baseUrl: v.isFullyQualifiedUrl
+  blacklistHosts: v.isStringOrArrayOfStrings
   chromeWebSecurity: v.isBoolean
   defaultCommandTimeout: v.isNumber
   env: v.isPlainObject
@@ -80,13 +115,16 @@ validationRules = {
   integrationFolder: v.isString
   numTestsKeptInMemory: v.isNumber
   pageLoadTimeout: v.isNumber
+  pluginsFile: v.isStringOrFalse
   port: v.isNumber
   reporter: v.isString
   requestTimeout: v.isNumber
   responseTimeout: v.isNumber
+  testFiles: v.isString
   screenshotOnHeadlessFailure: v.isBoolean
   supportFile: v.isStringOrFalse
   trashAssetsBeforeHeadlessRuns: v.isBoolean
+  userAgent: v.isString
   videoCompression: v.isNumberOrFalse
   videoRecording: v.isBoolean
   videoUploadOnPasses: v.isBoolean
@@ -154,21 +192,25 @@ module.exports = {
 
     _.extend config, _.pick(options, "morgan", "isTextTerminal", "socketId", "report", "browsers")
 
-    _.each @whitelist(options), (val, key) ->
+    _
+    .chain(@whitelist(options))
+    .omit("env")
+    .each (val, key) ->
       resolved[key] = "cli"
       config[key] = val
       return
+    .value()
 
     if url = config.baseUrl
       ## always strip trailing slashes
       config.baseUrl = _.trimEnd(url, "/")
 
-    _.defaults config, defaults
+    _.defaults(config, defaults)
 
     ## split out our own app wide env from user env variables
     ## and delete envFile
-    config.environmentVariables = @parseEnv(config, resolved)
-    config.env = process.env["CYPRESS_ENV"]
+    config.env = @parseEnv(config, options.env, resolved)
+    config.cypressEnv = process.env["CYPRESS_ENV"]
     delete config.envFile
 
     ## when headless
@@ -190,7 +232,8 @@ module.exports = {
     config = @setParentTestsPaths(config)
 
     @setSupportFileAndFolder(config)
-    .then @setScaffoldPaths
+    .then(@setPluginsFile)
+    .then(@setScaffoldPaths)
 
   setResolvedConfigValues: (config, defaults, resolved) ->
     obj = _.clone(config)
@@ -198,6 +241,32 @@ module.exports = {
     obj.resolved = @resolveConfigValues(config, defaults, resolved)
 
     return obj
+
+  updateWithPluginValues: (cfg, overrides = {}) ->
+    ## diff the overrides with cfg
+    ## including nested objects (env)
+    diffs = deepDiff(cfg, overrides, true)
+
+    setResolvedOn = (resolvedObj, obj) ->
+      _.each obj, (val, key) ->
+        if _.isObject(val)
+          ## recurse setting overrides
+          ## inside of this nested objected
+          setResolvedOn(resolvedObj[key], val)
+        else
+          ## override the resolved value
+          resolvedObj[key] = {
+            value: val
+            from: "plugin"
+          }
+
+    ## for each override go through
+    ## and change the resolved values of cfg
+    ## to point to the plugin
+    setResolvedOn(cfg.resolved, diffs)
+
+    ## merge cfg into overrides
+    _.defaultsDeep(diffs, cfg)
 
   resolveConfigValues: (config, defaults, resolved = {}) ->
     ## pick out only the keys found in configKeys
@@ -249,7 +318,7 @@ module.exports = {
     .try ->
       ## resolve full path with extension
       obj.supportFile = require.resolve(sf)
-    .then () ->
+    .then ->
       if pathHelpers.checkIfResolveChangedRootFolder(obj.supportFile, sf)
         log("require.resolve switched support folder from %s to %s",
           sf, obj.supportFile)
@@ -270,7 +339,7 @@ module.exports = {
         log("support file is default, check if #{path.dirname(sf)} exists")
         return fs.pathExists(sf)
         .then (found) ->
-          if (found)
+          if found
             log("support folder exists, set supportFile to false")
             ## if the directory exists, set it to false so it's ignored
             obj.supportFile = false
@@ -284,12 +353,61 @@ module.exports = {
         ## they have it explicitly set, so it should be there
         errors.throw("SUPPORT_FILE_NOT_FOUND", path.resolve(obj.projectRoot, sf))
     )
-    .then () ->
+    .then ->
       if obj.supportFile
         ## set config.supportFolder to its directory
         obj.supportFolder = path.dirname(obj.supportFile)
         log "set support folder #{obj.supportFolder}"
       obj
+
+  ## set pluginsFile to an absolute path with the following rules:
+  ## - do nothing if pluginsFile is falsey
+  ## - look up the absolute path via node, so 'cypress/plugins' can resolve
+  ##   to 'cypress/plugins/index.js' or 'cypress/plugins/index.coffee'
+  ## - if not found
+  ##   * and the pluginsFile is set to the default
+  ##     - and the path to the pluginsFile directory exists
+  ##       * assume the user doesn't need a pluginsFile, set it to false
+  ##         so it's ignored down the pipeline
+  ##     - and the path to the pluginsFile directory does not exist
+  ##       * set it to cypress/plugins/index.js, it will get scaffolded
+  ##   * and the pluginsFile is NOT set to the default
+  ##     - throw an error, because it should be there if the user
+  ##       explicitly set it
+  setPluginsFile: (obj) ->
+    return Promise.resolve(obj) if not obj.pluginsFile
+
+    obj = _.clone(obj)
+
+    pluginsFile = path.join(obj.projectRoot, obj.pluginsFile)
+    log("setting plugins file #{pluginsFile}")
+    log("for project root #{obj.projectRoot}")
+
+    Promise
+    .try ->
+      ## resolve full path with extension
+      obj.pluginsFile = require.resolve(pluginsFile)
+      log("set pluginsFile to #{obj.pluginsFile}")
+    .catch {code: "MODULE_NOT_FOUND"}, ->
+      log("plugins file does not exist")
+      if pluginsFile is path.resolve(obj.projectRoot, defaults.pluginsFile)
+        log("plugins file is default, check if #{path.dirname(pluginsFile)} exists")
+        fs.pathExists(pluginsFile)
+        .then (found) ->
+          if found
+            log("plugins folder exists, set pluginsFile to false")
+            ## if the directory exists, set it to false so it's ignored
+            obj.pluginsFile = false
+          else
+            log("plugins folder does not exist, set to default index.js")
+            ## otherwise, set it up to be scaffolded later
+            obj.pluginsFile = path.join(pluginsFile, "index.js")
+          return obj
+      else
+        log("plugins file is not default")
+        ## they have it explicitly set, so it should be there
+        errors.throw("PLUGINS_FILE_ERROR", path.resolve(obj.projectRoot, pluginsFile))
+    .return(obj)
 
   setParentTestsPaths: (obj) ->
     ## projectRoot:              "/path/to/project"
@@ -338,8 +456,8 @@ module.exports = {
 
     return obj
 
-  parseEnv: (cfg, resolved = {}) ->
-    envVars = resolved.environmentVariables = {}
+  parseEnv: (cfg, envCLI, resolved = {}) ->
+    envVars = resolved.env = {}
 
     resolveFrom = (from, obj = {}) ->
       _.each obj, (val, key) ->
@@ -351,7 +469,7 @@ module.exports = {
     envCfg  = cfg.env ? {}
     envFile = cfg.envFile ? {}
     envProc = @getProcessEnvVars(process.env) ? {}
-    envCLI  = cfg.environmentVariables ? {}
+    envCLI  = envCLI ? {}
 
     matchesConfigKey = (key) ->
       if _.has(cfg, key)

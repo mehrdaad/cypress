@@ -25,6 +25,7 @@ files         = require("#{root}lib/controllers/files")
 CacheBuster   = require("#{root}lib/util/cache_buster")
 Fixtures      = require("#{root}test/support/helpers/fixtures")
 errors        = require("#{root}lib/errors")
+preprocessor  = require("#{root}lib/plugins/preprocessor")
 
 fs = Promise.promisifyAll(fs)
 
@@ -52,6 +53,7 @@ browserifyFile = (filePath) ->
 describe "Routes", ->
   beforeEach ->
     @sandbox.stub(CacheBuster, "get").returns("-123")
+    @sandbox.stub(Server.prototype, "reset")
 
     nock.enableNetConnect()
 
@@ -124,6 +126,7 @@ describe "Routes", ->
     nock.cleanAll()
     Fixtures.remove()
     @session.destroy()
+    preprocessor.close()
 
     Promise.join(
       @server.close()
@@ -1475,6 +1478,25 @@ describe "Routes", ->
             "__cypress.initial=true; Domain=localhost; Path=/"
           ]
 
+      it "ignores invalid cookies", ->
+        nock(@server._remoteOrigin)
+        .get("/invalid")
+        .reply 200, "OK", {
+          "set-cookie": [
+            "foo=bar; Path=/"
+             "___utmvmXluIZsM=fidJKOsDSdm; path=/; Max-Age=900" ## this is okay
+             "___utmvbXluIZsM=bZM\n    XtQOGalF: VtR; path=/; Max-Age=900" ## should ignore this
+           ]
+        }
+
+        @rp("http://localhost:8080/invalid")
+        .then (res) ->
+          expect(res.statusCode).to.eq(200)
+          expect(res.headers["set-cookie"]).to.deep.eq [
+            "foo=bar; Path=/"
+             "___utmvmXluIZsM=fidJKOsDSdm; path=/; Max-Age=900"
+          ]
+
       it "forwards other headers from incoming responses", ->
         nock(@server._remoteOrigin)
         .get("/auth")
@@ -2587,6 +2609,42 @@ describe "Routes", ->
           expect(res.statusCode).to.eq(401)
 
           expect(res.body).to.include("Cypress errored attempting to make an http request to this url")
+
+    context "blacklisted hosts", ->
+      beforeEach ->
+        @setup({
+          config: {
+            blacklistHosts: [
+              "*.google.com"
+              "shop.apple.com"
+              "cypress.io"
+              "localhost:6666"
+              "*adwords.com"
+            ]
+          }
+        })
+
+      it "returns 503 and custom headers for all hosts", ->
+        expectedHeader = (res, val) ->
+          expect(res.headers["x-cypress-matched-blacklisted-host"]).to.eq(val)
+
+        Promise.all([
+          @rp("https://mail.google.com/f")
+          @rp("http://shop.apple.com/o")
+          @rp("https://cypress.io")
+          @rp("https://localhost:6666/o")
+          @rp("https://some.adwords.com")
+        ])
+        .spread (responses...) ->
+          _.every responses, (res) ->
+            expect(res.statusCode).to.eq(503)
+            expect(res.body).to.be.empty
+
+          expectedHeader(responses[0], "*.google.com")
+          expectedHeader(responses[1], "shop.apple.com")
+          expectedHeader(responses[2], "cypress.io")
+          expectedHeader(responses[3], "localhost:6666")
+          expectedHeader(responses[4], "*adwords.com")
 
   context "POST *", ->
     beforeEach ->
